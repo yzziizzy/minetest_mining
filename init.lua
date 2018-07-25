@@ -11,6 +11,7 @@ local function stepfn(self, dtime)
 
 	
 	local pos = self.object:getpos()
+	local rpos = vector.round(pos)
 	local yaw = self.object:getyaw() or 0
 	
 	local frontdir = vector.round(vector.normalize(v))
@@ -28,33 +29,55 @@ local function stepfn(self, dtime)
 		
 		local n = minetest.get_node(p)
 		if n.name == "air" then
-			print("unstable")
+			--print("unstable")
 			stable = false
 			break
 		end
-		print(dump2(p))
+		--print(dump2(p))
 	end
 	
-	if stable == false then
+	local cleared = true
+	local ll = {}
+	
+	self.dig_timer = (self.dig_timer or 0) + dtime
+	if self.dig_timer > 1  then 
+		local eb = false
+
+		for h = 0,3 do
+			for w = -4,4 do
+				local p = {x=frontpos.x , y = frontpos.y + h, z=frontpos.z + w}
+				
+				local fnode = minetest.get_node(p)
+				
+				if fnode.name ~= "air" then
+					cleared = false
+					self.advance = false
+				
+					local drops =  minetest.get_node_drops(fnode.name)
+					for _,d in ipairs(drops) do
+						table.insert(ll, d)
+					end
+					minetest.set_node(p, {name="air"})
+					
+					eb = true
+					break
+				end
+				
+			end
+			if eb then break end
+		end
+		
+		self.advance = true
+		self.dig_timer = self.dig_timer % 1
+	end
+	
+	-- TODO: fix advancement logic
+	if stable == false or cleared == false or self.advance == false then
 		self.object:setvelocity({x=0,y=0,z=0})
 	else
 		self.object:setvelocity(v)
 	end
 	
-	local ll = {}
-	for h = 0,3 do
-		for w = -4,4 do
-			local p = {x=frontpos.x , y = frontpos.y + h, z=frontpos.z + w}
-			
-			local fnode = minetest.get_node(p)
-			
-			if fnode.name ~= "air" then
-				table.insert(ll, minetest.get_node_drops(fnode.name))
-				minetest.set_node(p, {name="air"})
-			end
-			
-		end
-	end
 	
 	local out_rail = vector.add(pos, cross)
 	local in_rail = vector.subtract(pos, cross)
@@ -102,7 +125,9 @@ local mdef = {
 	automatic_rotate = false,
 	
 	on_step = stepfn,
-
+	
+	dig_timer = 0,
+	advance = true,
 }
 
 minetest.register_entity("mining:digger", mdef)
