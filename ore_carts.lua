@@ -52,13 +52,18 @@ local function stepfn(self, dtime)
 			local posnode = minetest.get_node(pos)
 			
 			if posnode.name == "mining:dump_rail" then
-				local c = table.remove(self.contents)
 				local below = vector.subtract(pos, {x=0,y=1,z=0})
+				local bn = minetest.get_node(below)
 				
-				minetest.set_node(below, {name = c})
-				minetest.spawn_falling_node(below)
-				
-				self.last_dump_pos = rpos
+				if bn.name == "air" then
+					local c = table.remove(self.contents)
+					minetest.set_node(below, {name = c})
+					minetest.spawn_falling_node(below)
+					
+					self.object:set_animation({x = 1, y = 15}, 10, 0, false)
+					
+					self.last_dump_pos = rpos
+				end
 			end
 		end
 	end
@@ -114,12 +119,12 @@ end
 local ore_cart_entity = {
 	hp_max = 5,
 	visual = "mesh",
-	mesh = "carts_cart.b3d",
-	visual_size = {x=.9, y=.9},
+	mesh = "mining_cart.x",
+	visual_size = {x=1, y=1},
 	collisionbox = {-0.45, -0.5, -0.45, 0.45, 0.4, 0.45},
 	physical = true,
-	textures = {"carts_cart.png"},
-	
+	textures = {"mining_cart.png", "mining_cart.png"},
+		
 	on_step = function(self, dtime) 
 		return stepfn(self, dtime)
 	end,

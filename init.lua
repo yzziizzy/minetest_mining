@@ -9,7 +9,6 @@ local function stepfn(self, dtime)
 	local v = {x=.2, y=0, z=0}
 	
 
-	
 	local pos = self.object:getpos()
 	local rpos = vector.round(pos)
 	local yaw = self.object:getyaw() or 0
@@ -19,63 +18,103 @@ local function stepfn(self, dtime)
 	
 	
 	-- what is in front of mob?
-	local frontpos = vector.add(frontdir, pos)
+	local frontpos = vector.add(pos, vector.multiply(frontdir, 4))
 	
-	-- check for stable path forward
-	local stable = true
-	for x = -1,1 do
-		local p = vector.add(frontpos, vector.multiply(cross, x))
-		p.y = p.y - 1
-		
-		local n = minetest.get_node(p)
-		if n.name == "air" then
-			--print("unstable")
-			stable = false
-			break
-		end
-		--print(dump2(p))
+	
+	if not vector.equals(self.last_pos, rpos) then 
+		self.state = "dig"
+		self.last_pos = rpos
 	end
 	
+	
+
+
+
+	
+	local stable = true
+	local dug_node = false
 	local cleared = true
 	local ll = {}
-	
-	self.dig_timer = (self.dig_timer or 0) + dtime
-	if self.dig_timer > 1  then 
-		local eb = false
-
-		for h = 0,3 do
-			for w = -4,4 do
-				local p = {x=frontpos.x , y = frontpos.y + h, z=frontpos.z + w}
-				
-				local fnode = minetest.get_node(p)
-				
-				if fnode.name ~= "air" then
-					cleared = false
-					self.advance = false
-				
-					local drops =  minetest.get_node_drops(fnode.name)
-					for _,d in ipairs(drops) do
-						table.insert(ll, d)
-					end
-					minetest.set_node(p, {name="air"})
-					
-					eb = true
-					break
-				end
-				
-			end
-			if eb then break end
+	--print("state: "..self.state)
+	if self.state == "dig" then
+-- 		self.object:setvelocity({x=0,y=0,z=0})
+		
+			
+		if not self.anim then
+			self.object:set_animation({x = 0, y = 40}, 10, 0, true)
+			self.anim = true
 		end
 		
-		self.advance = true
-		self.dig_timer = self.dig_timer % 1
+		self.dig_timer = (self.dig_timer or 0) + dtime
+		if self.dig_timer > 1  then 
+			local eb = false
+			self.advance = false
+
+			for h = 0,3 do
+				for w = -4,4 do
+					local p = vector.add(frontpos, vector.multiply(cross, w))
+					p.y = p.y + h
+				--	print(minetest.pos_to_string(p))
+					
+					local fnode = minetest.get_node(p)
+					
+					if fnode.name ~= "air" then
+						dug_node = true
+						self.advance = false
+					
+						local drops =  minetest.get_node_drops(fnode.name)
+						for _,d in ipairs(drops) do
+							table.insert(ll, d)
+						end
+						minetest.set_node(p, {name="air"})
+						
+						eb = true
+						break
+					end
+					
+				end
+				if eb then break end
+			end
+			
+			
+			if not dug_node then
+				self.state = "advance"
+			end
+			
+			self.dig_timer = self.dig_timer % 1
+		end
+		
+	elseif self.state == "advance" then
+		-- check for stable path forward
+		
+		for x = -1,1 do
+			local p = vector.add(frontpos, vector.multiply(cross, x))
+			p.y = p.y - 1
+			
+			local n = minetest.get_node(p)
+			if n.name == "air" then
+				--print("unstable")
+				stable = false
+				break
+			end
+			--print(dump2(p))
+		end
+	
+	elseif self.state == "stop" then
+		self.object:setvelocity({x=0,y=0,z=0})
+		self.object:set_animation({x = 0, y = 0}, 10, 0, false)
+		self.anim = nil
+		self.advance = false
 	end
+
 	
 	-- TODO: fix advancement logic
-	if stable == false or cleared == false or self.advance == false then
-		self.object:setvelocity({x=0,y=0,z=0})
-	else
+	if self.state == "advance" then
+		--print("advance ")
 		self.object:setvelocity(v)
+	else
+		--print("stop")
+		self.object:setvelocity({x=0,y=0,z=0})
 	end
 	
 	
@@ -116,11 +155,11 @@ end
 local mdef = {
 	hp_max = 1,
 	physical = true,
-	collisionbox = {-0.5,-0.5,-0.5, 0.5,0.5,0.5},
-	visual = "cube",
+	collisionbox = {-3,-0.5,-3, 3,1.5,3},
+	visual = "mesh",
 	visual_size = {x=1, y=1},
--- 	mesh = "model",
-	textures = {"default_aspen_wood.png","default_aspen_wood.png","default_aspen_wood.png","default_aspen_wood.png","default_aspen_wood.png","default_aspen_wood.png"}, -- number of required textures depends on visual
+	mesh = "mining_continuous_miner.x",
+	textures = {"default_aspen_wood.png","default_steel_block.png"},
 	is_visible = true,
 	automatic_rotate = false,
 	
@@ -128,6 +167,10 @@ local mdef = {
 	
 	dig_timer = 0,
 	advance = true,
+	
+	direction = {x=0, y=0, z=1},
+	state = "dig",
+	last_pos = {x=99999999, y=999999999, z=999999999},
 }
 
 minetest.register_entity("mining:digger", mdef)
