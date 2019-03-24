@@ -27,16 +27,82 @@ minetest.register_craft({
 })
 
 
+
+local function is_rail(name) 
+	local d = minetest.registered_nodes[name]
+	return (d and d.groups.rail ~= nil)
+end
+
+
+local function printl(str, v)
+	print(str .. " ["..v.x..", "..v.y..", "..v.z.."]")
+end
+
+
+local counter = 0
+
 local function stepfn(self, dtime)
 	
-	if self.direction == nil then
-		return
-	end
+	--print(" ---- ")
 	
 	local speed = 2
 	
 	local pos = self.object:getpos()
+	local rpos = vector.round(pos)
 
+	--	printl("pos", pos)
+--	printl("rpos", rpos)
+	
+	if self.direction == nil or self.direction.x == nil then
+		print("no direction")
+		local n
+		
+		n = minetest.get_node({x=rpos.x + 1, y=rpos.y, z=rpos.z})
+		if is_rail(n.name) then
+			self.direction = {x=1, y=0, z=0}
+		else
+			n = minetest.get_node({x=rpos.x - 1, y=rpos.y, z=rpos.z})
+			if is_rail(n.name) then
+				self.direction = {x=-1, y=0, z=0}
+			else
+				n = minetest.get_node({x=rpos.x, y=rpos.y, z=rpos.z + 1})
+				if is_rail(n.name) then
+					self.direction = {x=0, y=0, z=1}
+				else
+					n = minetest.get_node({x=rpos.x, y=rpos.y, z=rpos.z-1})
+					if is_rail(n.name) then
+						self.direction = {x=0, y=0, z=-1}
+					else
+						print("isolated cart")
+						return
+					end
+				end
+			end 
+		end
+		
+		self.object:setvelocity(vector.multiply(self.direction, speed))
+		self.last_pos = rpos 
+	end
+	
+	
+	local d = vector.distance(self.last_pos, pos)
+	
+	
+	if  d < 1.0 then
+		if self.state ~= "stop" then
+			self.object:setvelocity(vector.multiply(self.direction, speed))
+		end
+		
+		-- TODO: timer to occasionally fix y-height
+		
+		return
+	end
+	self.last_pos = rpos
+	print("crossed")
+	--self.object:setvelocity({x=0, y=0, z=0})
+	
+	--if counter == 1 then return end
+	--counter = 1
 	
 	--local ceiln = minetest.get_node({x=math.ceil(pos.x), y=pos.y, z=math.ceil(pos.z)}) 
 	--local floorn = minetest.get_node({x=math.floor(pos.x), y=pos.y, z=math.floor(pos.z)}) 
@@ -69,20 +135,37 @@ local function stepfn(self, dtime)
 	end
 	
 	
-	local nextp = vector.add(pos, hdir)
+	local nextp = vector.round(vector.add(pos, vector.multiply(self.direction, 1.0)))
 	local pn = minetest.get_node(nextp)
 	
-	if minetest.registered_nodes[pn.name].groups.rail ~= nil then
+	if is_rail(pn.name) then
+		print("straight")
 		self.object:setvelocity(vector.multiply(self.direction, speed))
+		
+		-- fix sideways errors
+		if self.direction.x == 0 then
+			pos.x = math.floor(pos.x+0.5)
+		end
+		if self.direction.z == 0 then
+			pos.z = math.floor(pos.z+0.5)
+		end
+		
+		self.object:setpos(pos)
+		
+		self.state = "straight"
 	else
--- 		print("checking sides")
+		print("checking sides")
 		-- check sides
 		local left = vector.add(pos, cross) 
 		local right = vector.subtract(pos, cross) 
 		local ln = minetest.get_node(left)
 		local rn = minetest.get_node(right)
+		print("ln "..ln.name)
+		print("rn "..rn.name)
 		
-		if ln.name == rn.name and minetest.registered_nodes[ln.name].groups.rail ~= nil then
+		self.state = "turning" 
+		
+		if ln.name == rn.name and is_rail(ln.name) then
 			if math.random(0, 1) == 1 then
 				self.direction = cross
 				self.object:setvelocity(vector.multiply(self.direction, speed))
@@ -90,34 +173,46 @@ local function stepfn(self, dtime)
 				self.direction = vector.multiply(cross, -1)
 				self.object:setvelocity(vector.multiply(self.direction, speed))
 			end
-			
-		elseif minetest.registered_nodes[ln.name].groups.rail ~= nil then
+			self.object:setpos(rpos)
+			print("random")
+		elseif is_rail(ln.name) then
+			self.object:setpos(rpos)
 			self.direction = cross
 			self.object:setvelocity(vector.multiply(self.direction, speed))
--- 			print("left")
-		elseif minetest.registered_nodes[rn.name].groups.rail ~= nil then
+			print("left")
+		elseif is_rail(rn.name) then
+			self.object:setpos(rpos)
 			self.direction = vector.multiply(cross, -1)
 			self.object:setvelocity(vector.multiply(self.direction, speed))
--- 			print("right")
+			print("right")
 		else
 			--stop
 			self.object:setpos(pos)
 			self.object:setvelocity({x=0, y=0, z=0})
--- 			print("stop")
+			print("stop")
+			
+			self.state = "stop"
 		end
 	end
 	
 	
-	
+
 	
 end
 
 
+local ore_cart_defaults = {
+	contents = {},
+	direction = {},
+	last_dump_pos = {x=999999, y=999999, z=999999},
+	last_pos = {x=999999, y=999999, z=999999},
+	state = "straight",
+}
 
 
 
 local ore_cart_entity = {
-	hp_max = 5,
+ 	hp_max = 2,
 	visual = "mesh",
 	mesh = "mining_cart.x",
 	visual_size = {x=1, y=1},
@@ -129,19 +224,44 @@ local ore_cart_entity = {
 		return stepfn(self, dtime)
 	end,
 	
-	on_rightclick = function(self)
-		self.direction = {
-			x = 1,
-			y = 0,
-			z = 0,
-		}
-		
+	on_punch = function(self, puncher)
+		local look = vector.round(puncher:get_look_dir())
+	
+		self.direction = look
 	end,
 	
-	contents = {},
-	direction = nil,
-	last_dump_pos = {x=999999, y=999999, z=999999},
+	get_staticdata = function(self)
+		local temp = {}
+		for k,_ in pairs(ore_cart_defaults) do
+			temp[k] = self[k]
+		end
+		print(dump2(temp))
+		return minetest.serialize(temp)
+	end,
+	
+	on_activate = function(self, staticdata)
+		
+-- 		self.object:set_armor_groups({immortal = 1})
+		print(dump2(staticdata))
+		if staticdata then
+			local temp = minetest.deserialize(staticdata)
+			print(dump2(temp))
+			if temp ~= nil then
+				for k,v in pairs(temp) do
+					if v ~= nil then
+						self[k] = v
+					end
+				end
+			end
+		end
+	end,
+		
+
 }
+
+for k,v in pairs(ore_cart_defaults) do
+	ore_cart_entity[k] = v
+end
 
 minetest.register_entity("mining:ore_cart", ore_cart_entity)
 
@@ -154,7 +274,7 @@ minetest.register_entity("mining:ore_cart", ore_cart_entity)
 minetest.register_craftitem("mining:ore_cart", {
 	description = "Ore Cart",
 	inventory_image = "default_sand.png^[colorize:green:80",
-	wield_image = "boats_tin_wield.png",
+-- 	wield_image = "boats_tin_wield.png",
 	wield_scale = {x = 1, y = 1, z = 1},
 	groups = {},
 	stack_max = 1,
@@ -189,7 +309,25 @@ minetest.register_craftitem("mining:ore_cart", {
 
 
 
+minetest.register_craft({
+	output = "mining:ore_cart",
+	recipe = {
+		{'',                    '',                    '',                    },
+		{'default:steel_ingot', 'default:cobble',      'default:steel_ingot', },
+		{'default:steel_ingot', 'default:steel_ingot', 'default:steel_ingot', },
+	},
+})
 
+
+
+
+minetest.register_node("mining:cart_lift", {
+	description = "Cart Lift",
+	tiles = { "default_brick.png^[colorize:white:20" },
+	is_ground_content = true,
+	groups = {cracky=1, level=3 },
+	sounds = default.node_sound_stone_defaults(),
+})
 
 
 
