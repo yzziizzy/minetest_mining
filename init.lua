@@ -2,9 +2,191 @@
 local modpath = minetest.get_modpath("mining")
 dofile(modpath.. "/ore_carts.lua")
 
+local mod_storage = minetest.get_mod_storage()
+
+mining = {}
+mining.data = {}
+mining.objects = {}
+
+mining.next_entity = mod_storage:get_int("next_entity") or 1
+mining.entities = minetest.deserialize(mod_storage:get_string("entities")) or {}
+
+
+
+
+function mk_digger_inv_on_put(id)
+	return function(inv, listname, index, stack, player)
+		print(id)
+		local name = stack:get_name()
+		
+		if name == "default:coal_lump" then
+			print(dump2(mining.objects))
+			local obj = mining.objects[id]
+			print("------------")
+			print(dump2(obj))
+			obj.data.fuel = obj.data.fuel + 10
+		end
+		
+	end
+end
+
+
+
+
+if type(mining.entities) ~= "table" then
+	mining.entities = {}
+end
+
+
+
+print(dump(mining.entities))
+
+-- recreate detached inventories
+for id,v in pairs(mining.entities) do
+	local inv1 = minetest.create_detached_inventory("mining_digger_"..id.."_hold", {
+		on_put = mk_digger_inv_on_put(id),
+	})
+	
+	print(dump(inv1))
+	
+	inv1:set_size("main", 5 * 8)
+	
+	if v.inventories then
+		inv1:set_lists(v.inventories[1])
+	end
+end
+
+
+local function serialize_invlist(list) 
+	local out = {}
+	
+	-- TODO: serialize metadata
+	
+	for k,v in pairs(list) do
+		if type(v) == "userdata" then
+			out[k] = v:to_string()
+		else
+			out[k] = v
+		end
+	end
+	return out
+end
+
+
+local function serialize_inventory(id) 
+	local inv = minetest.get_inventory({type="detached", name="mining_digger_"..id.."_hold"})
+	local lists = inv:get_lists()
+	local out = {}
+	for id,v in pairs(lists) do
+		out[id] = serialize_invlist(v)
+	end
+	return out
+end
+
+
+local function save_data() 
+	--print("saving")
+	mod_storage:set_int("next_entity", mining.next_entity);
+	
+	for id,v in pairs(mining.entities) do
+		--print("id: "..id)
+		v.inventories[1] = serialize_inventory(id)
+	end
+	
+	--print(dump(mining.entities))
+	
+	mod_storage:set_string("entities", minetest.serialize(mining.entities))
+	
+end
+
+
+
+local function deploy_digger(digger)
+	local id = mining.next_entity
+	mining.next_entity = mining.next_entity + 1
+	
+	digger.data = digger.data or {}
+	digger.data.id = id
+	digger.data.fuel = 0
+	
+	mining.objects[id] = digger
+	
+	mining.entities[id] = {
+		id = id,
+		inventories = {}
+	}
+	
+	local inv1 = minetest.create_detached_inventory("mining_digger_"..id.."_hold", {
+		on_put = mk_digger_inv_on_put(id),
+	})
+
+	inv1:set_size("main", 5 * 8)
+	
+	
+	save_data()
+end
+
+
+
+
+
+local function get_digger_formspec(ent)
+	local state_str = "Sailing"
+	
+	return "" ..
+		"size[8,8;]" ..
+		default.gui_bg ..
+		default.gui_bg_img ..
+		default.gui_slots ..
+		"list[detached:mining_digger_"..ent.data.id.."_hold;main;0,0;3,2;]"..
+		"label[4,0;Fuel: "..ent.data.fuel.."]"..
+		"button[5,1;2,.25;start;Start]" ..
+		"button[5,2;2,.25;stop;Stop]" ..
+		
+		"list[current_player;main;0,3.25;8,1;]"..
+		"list[current_player;main;0,4.5;8,3;8]"..
+		"listring[context;dst]"..
+		"listring[current_player;main]"..
+		"listring[context;src]"..
+		"listring[current_player;main]"..
+		"listring[context;fuel]"..
+		"listring[current_player;main]"..
+		default.get_hotbar_bg(0, 3.25)
+end
+
+
+local function get_digger_inv_formspec(digger, hold)
+	local state_str = "Sailing"
+	
+	return "size[8,8.5]"..
+		default.gui_bg..
+		default.gui_bg_img..
+		default.gui_slots..
+		"list[context;hold;4,2;3,2;]"..
+		"image[2,2.5;1,1;default_furnace_fire_bg.png]"..
+
+		"list[current_player;main;0,4.25;8,1;]"..
+		"list[current_player;main;0,5.5;8,3;8]"..
+		"listring[context;dst]"..
+		"listring[current_player;main]"..
+		"listring[context;src]"..
+		"listring[current_player;main]"..
+		"listring[context;fuel]"..
+		"listring[current_player;main]"..
+		default.get_hotbar_bg(0, 4.25)
+end
+
+
+
+
 
 
 local function stepfn(self, dtime)
+	
+	if self.empty_carts == nil then
+		self.empty_carts = 2
+	end
+	
 	
 	local v = {x=.2, y=0, z=0}
 	
@@ -46,7 +228,7 @@ local function stepfn(self, dtime)
 		end
 		
 		self.dig_timer = (self.dig_timer or 0) + dtime
-		if self.dig_timer > 1  then 
+		if self.dig_timer > 1 and self.empty_carts > 0 then 
 			local eb = false
 			self.advance = false
 
@@ -123,12 +305,14 @@ local function stepfn(self, dtime)
 	minetest.set_node(out_rail, {name="carts:rail"})
 	minetest.set_node(in_rail, {name="carts:rail"})
 	
-	if #ll > 0 then
+	if #ll > 0 and self.empty_carts > 0 then
 		local cart = minetest.add_entity(out_rail, "mining:ore_cart")
 		if cart then
 			local cc = cart:get_luaentity()
 			cc.direction = vector.multiply(frontdir, -1)
 			cc.contents = ll
+			
+			self.empty_carts = self.empty_carts - 1
 		end
 	end
 	
@@ -140,6 +324,7 @@ local function stepfn(self, dtime)
 		if not obj:is_player() then
 			if obj:get_luaentity().name == "mining:ore_cart" then
 				obj:remove()
+				self.empty_carts = self.empty_carts + 1
 			end
 		end
 	end
@@ -148,6 +333,60 @@ end
 
 
 
+
+
+local function rcfn(self, clicker) 
+	
+	if not clicker or not clicker:is_player() then
+		return
+	end
+	--local name = clicker:get_player_name()
+	
+	minetest.show_formspec(clicker:get_player_name(), "mining:digger_formQ"..self.data.id, get_digger_formspec(self))
+	
+	
+end
+
+
+
+local function splitname(name)
+	local c = string.find(name, "Q")
+	if c == nil then return nil, nil end
+	--print("c " ..c)
+	return string.sub(name, 1,  c - 1), string.sub(name, c + 1, string.len(name))
+end
+
+
+minetest.register_on_player_receive_fields(function(player, formname, fields)
+	
+	
+	local formprefix, id = splitname(formname)
+	
+	if formprefix ~= "mining:digger_form" then
+		--print("wrong prefix: " .. formname .. " - " .. formprefix)
+		return
+	end
+	
+	
+	
+	if fields.board then
+-- 		id = id + 0
+-- 		local boat = boat_data.objects[id]
+-- 		print("id ".. id)
+-- 		if not boat then
+-- 			print("no boat " .. dump(boat) .. " " .. dump(id))
+-- 			print(dump(boat_data))
+-- 			--enter_boat(boat, player)
+-- 		else
+-- 			enter_boat(boat, player)
+-- 		end
+		return
+	elseif fields.hold_a then
+			-- minetest.show_formspec(player:get_player_name(), "mining:digger_formQ"..self.data.id, get_steel_boat_inv_formspec(self, "a"))
+			
+	end
+	
+end)
 
 
 
@@ -164,6 +403,30 @@ local mdef = {
 	automatic_rotate = false,
 	
 	on_step = stepfn,
+	
+	on_rightclick = rcfn,
+	
+	get_staticdata = function(self)
+		return minetest.serialize(self.data)
+	end,
+	
+	on_activate = function(self, staticdata, dtime_s)
+		--self.object:set_armor_groups({immortal = 1})
+		if staticdata then
+			self.data = minetest.deserialize(staticdata)
+			
+			if not self.data or not self.data.id then 
+				deploy_digger(self)
+			end
+			print("self.data.id = "..self.data.id)
+			print(dump(self))
+			mining.objects[self.data.id] = self
+		else 
+			self.data = {}
+			print("digger with no staticdata")
+		end
+	end,
+
 	
 	dig_timer = 0,
 	advance = true,
@@ -202,8 +465,10 @@ minetest.register_craftitem("mining:digger", {
 		
 		pointed_thing.under.y = pointed_thing.under.y + 1.2
 		
-		digger = minetest.add_entity(pointed_thing.under, "mining:digger")
-		if digger then
+		local diggerobj = minetest.add_entity(pointed_thing.under, "mining:digger")
+		if diggerobj then
+			local digger = diggerobj:get_luaentity()
+			digger.empty_carts = 5
 			
 			local player_name = placer and placer:get_player_name() or ""
 			if not (creative and creative.is_enabled_for and

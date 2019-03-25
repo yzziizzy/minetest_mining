@@ -33,26 +33,19 @@ local function is_rail(name)
 	return (d and d.groups.rail ~= nil)
 end
 
+local function lift_above(pos) 
+	local n = minetest.get_node({x=pos.x, y=pos.y+1, z=pos.z})
+	return n and n.name == "mining:cart_lift"
+end
+
 
 local function printl(str, v)
 	print(str .. " ["..v.x..", "..v.y..", "..v.z.."]")
 end
 
 
-local counter = 0
+local function check_new_direction(self, rpos)
 
-local function stepfn(self, dtime)
-	
-	--print(" ---- ")
-	
-	local speed = 2
-	
-	local pos = self.object:getpos()
-	local rpos = vector.round(pos)
-
-	--	printl("pos", pos)
---	printl("rpos", rpos)
-	
 	if self.direction == nil or self.direction.x == nil then
 		print("no direction")
 		local n
@@ -80,25 +73,52 @@ local function stepfn(self, dtime)
 			end 
 		end
 		
-		self.object:setvelocity(vector.multiply(self.direction, speed))
+		self.object:setvelocity(vector.multiply(self.direction, self.speed))
 		self.last_pos = rpos 
 	end
+end
+
+
+
+
+-- for debugging
+local counter = 0
+
+local function stepfn(self, dtime)
+	
+	--print(" ---- ")
+	
+	if self.speed == nil then
+		self.speed = 2
+	end
+	
+	local pos = self.object:getpos()
+	local rpos = vector.round(pos)
+
+	--	printl("pos", pos)
+--	printl("rpos", rpos)
+	
+	check_new_direction(self, rpos)
 	
 	
 	local d = vector.distance(self.last_pos, pos)
 	
-	
+	if self.state == "lifting" then
+		self.speed = .5
+	elseif self.state ~= "stop" then
+		self.speed = 2
+	end
+		
 	if  d < 1.0 then
 		if self.state ~= "stop" then
-			self.object:setvelocity(vector.multiply(self.direction, speed))
+			self.object:setvelocity(vector.multiply(self.direction, self.speed))
 		end
-		
 		-- TODO: timer to occasionally fix y-height
 		
 		return
 	end
 	self.last_pos = rpos
-	print("crossed")
+-- 	print("crossed")
 	--self.object:setvelocity({x=0, y=0, z=0})
 	
 	--if counter == 1 then return end
@@ -106,7 +126,7 @@ local function stepfn(self, dtime)
 	
 	--local ceiln = minetest.get_node({x=math.ceil(pos.x), y=pos.y, z=math.ceil(pos.z)}) 
 	--local floorn = minetest.get_node({x=math.floor(pos.x), y=pos.y, z=math.floor(pos.z)}) 
-	local cross = {x=self.direction.z, y=0, z= -self.direction.x}
+	local cross = vector.normalize({x=self.direction.z, y=0, z= -self.direction.x})
 	local hdir = vector.multiply(self.direction, .5)
 	
 	
@@ -135,12 +155,19 @@ local function stepfn(self, dtime)
 	end
 	
 	
-	local nextp = vector.round(vector.add(pos, vector.multiply(self.direction, 1.0)))
+	local nextp = vector.round(
+		vector.add(pos, 
+			vector.multiply(
+-- 				vector.normalize({x=self.direction.x, y=0, z=self.direction.z}), 
+				self.direction, 
+				1.0)
+		)
+	)
 	local pn = minetest.get_node(nextp)
 	
 	if is_rail(pn.name) then
-		print("straight")
-		self.object:setvelocity(vector.multiply(self.direction, speed))
+-- 		print("straight")
+		self.object:setvelocity(vector.multiply(self.direction, self.speed))
 		
 		-- fix sideways errors
 		if self.direction.x == 0 then
@@ -153,45 +180,117 @@ local function stepfn(self, dtime)
 		self.object:setpos(pos)
 		
 		self.state = "straight"
+	elseif self.state == "lifting" then
+		if lift_above(rpos) then
+			-- keep lifting
+			print("still lifting")
+		else
+			print("looking for new direction at end of lift")
+			self.direction = nil
+			check_new_direction(self, rpos)
+			
+		end
 	else
-		print("checking sides")
+-- 		print("checking sides")
 		-- check sides
+-- 		printl("pos", pos)
 		local left = vector.add(pos, cross) 
 		local right = vector.subtract(pos, cross) 
+-- 		printl("left", left )
+-- 		printl("right", right )
 		local ln = minetest.get_node(left)
 		local rn = minetest.get_node(right)
-		print("ln "..ln.name)
-		print("rn "..rn.name)
+-- 		print("ln "..ln.name)
+-- 		print("rn "..rn.name)
 		
-		self.state = "turning" 
+
+		
+		--front
+		local front = vector.add(rpos, vector.normalize({x=self.direction.x, y=0, z=self.direction.z}))
+		local fn = minetest.get_node(front)
+		
+		--self.state = "turning" 
 		
 		if ln.name == rn.name and is_rail(ln.name) then
 			if math.random(0, 1) == 1 then
 				self.direction = cross
-				self.object:setvelocity(vector.multiply(self.direction, speed))
+				self.object:setvelocity(vector.multiply(self.direction, self.speed))
 			else
 				self.direction = vector.multiply(cross, -1)
-				self.object:setvelocity(vector.multiply(self.direction, speed))
+				self.object:setvelocity(vector.multiply(self.direction, self.speed))
 			end
 			self.object:setpos(rpos)
 			print("random")
 		elseif is_rail(ln.name) then
 			self.object:setpos(rpos)
 			self.direction = cross
-			self.object:setvelocity(vector.multiply(self.direction, speed))
+			self.object:setvelocity(vector.multiply(self.direction, self.speed))
 			print("left")
 		elseif is_rail(rn.name) then
 			self.object:setpos(rpos)
 			self.direction = vector.multiply(cross, -1)
-			self.object:setvelocity(vector.multiply(self.direction, speed))
+			self.object:setvelocity(vector.multiply(self.direction, self.speed))
 			print("right")
-		else
-			--stop
-			self.object:setpos(pos)
-			self.object:setvelocity({x=0, y=0, z=0})
-			print("stop")
+		elseif is_rail(fn.name) then
+			self.object:setpos(rpos)
+			self.direction = vector.normalize({x=self.direction.x, y=0, z=self.direction.z})
+			self.object:setvelocity(vector.multiply(self.direction, self.speed))
 			
-			self.state = "stop"
+		elseif lift_above(rpos) then
+			self.object:setpos(rpos)
+			self.direction = {x=0, y=1, z=0}
+			self.speed = .5
+			self.object:setvelocity(vector.multiply({x=0, y=1, z=0}, self.speed))
+			
+			self.state = "lifting"
+			print("lifting")
+		else
+			print("checking below")
+			--below
+			local below = vector.add(nextp, {x=0, y=-1, z=0})
+			local bn = minetest.get_node(below)
+			
+			local bleft = vector.add(vector.add(rpos, cross), {x=0, y=-1, z=0})  
+			local bright = vector.add(vector.subtract(rpos, cross), {x=0, y=-1, z=0})
+			local bln = minetest.get_node(bleft)
+			local brn = minetest.get_node(bright)
+		
+			print("belowleft: "..bln.name)
+			print("belowright: "..brn.name)
+		
+			if is_rail(bn.name) then
+				print("angle down")
+				
+				local dir = vector.normalize(vector.add(self.direction, {x=0, y=-1, z=0}))
+				self.direction = dir
+				printl("dir", dir)
+				self.object:setvelocity(vector.multiply(dir, self.speed))
+				
+			elseif is_rail(bln.name) then
+				self.object:setpos(rpos)
+				
+				local dir = vector.normalize(
+					vector.add(cross, {x=0, y=-1, z=0}))
+				self.direction = dir
+				self.object:setvelocity(vector.multiply(self.direction, self.speed))
+				print("down left")
+			elseif is_rail(brn.name) then
+				self.object:setpos(rpos)
+				local dir = vector.normalize(
+					vector.add(vector.multiply(cross, -1), 
+						{x=0, y=-1, z=0}))
+				self.object:setvelocity(vector.multiply(self.direction, self.speed))
+				print("down right")
+				
+			else
+				--stop
+				self.object:setpos(pos)
+				self.object:setvelocity({x=0, y=0, z=0})
+				print("stop")
+				
+				self.state = "stop"
+			
+			end
 		end
 	end
 	
@@ -256,6 +355,10 @@ local ore_cart_entity = {
 		end
 	end,
 		
+	push = function(self) 
+		print("ore cart push called")
+		
+	end,
 
 }
 
@@ -313,7 +416,7 @@ minetest.register_craft({
 	output = "mining:ore_cart",
 	recipe = {
 		{'',                    '',                    '',                    },
-		{'default:steel_ingot', 'default:cobble',      'default:steel_ingot', },
+		{'group:wood',          'default:cobble',      'group:wood',          },
 		{'default:steel_ingot', 'default:steel_ingot', 'default:steel_ingot', },
 	},
 })
@@ -323,10 +426,33 @@ minetest.register_craft({
 
 minetest.register_node("mining:cart_lift", {
 	description = "Cart Lift",
-	tiles = { "default_brick.png^[colorize:white:20" },
+	tiles = { "default_bronze_block.png" },
 	is_ground_content = true,
 	groups = {cracky=1, level=3 },
 	sounds = default.node_sound_stone_defaults(),
+	paramtype = "light",
+	drawtype = "nodebox",
+	node_box = {
+		type = "fixed",
+		fixed = {
+			{-0.55, -0.5, -0.55, -0.51, 0.5, -0.51},
+			{-0.55, -0.5,  0.55, -0.51, 0.5,  0.51},
+			{ 0.55, -0.5, -0.55,  0.51, 0.5, -0.51},
+			{ 0.55, -0.5,  0.55,  0.51, 0.5,  0.51},
+		},
+-- 		fixed = {
+-- 			{-0.5, -0.5, -0.5, -0.45, 0.5, -0.45},
+-- 			{-0.5, -0.5,  0.5, -0.45, 0.5,  0.45},
+-- 			{ 0.5, -0.5, -0.5,  0.45, 0.5, -0.45},
+-- 			{ 0.5, -0.5,  0.5,  0.45, 0.5,  0.45},
+-- 		},
+	},
+	selection_box = {
+		type = "fixed",
+		fixed = {
+			{-0.5, -0.5, -0.5, 0.5, 0.5, 0.5},
+		},
+	},
 })
 
 
