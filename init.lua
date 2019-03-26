@@ -20,10 +20,10 @@ function mk_digger_inv_on_put(id)
 		local name = stack:get_name()
 		
 		if name == "default:coal_lump" then
-			print(dump2(mining.objects))
+		--	print(dump2(mining.objects))
 			local obj = mining.objects[id]
-			print("------------")
-			print(dump2(obj))
+		--	print("------------")
+		----	print(dump2(obj))
 			obj.data.fuel = obj.data.fuel + 10
 		end
 		
@@ -39,7 +39,7 @@ end
 
 
 
-print(dump(mining.entities))
+--print(dump(mining.entities))
 
 -- recreate detached inventories
 for id,v in pairs(mining.entities) do
@@ -47,7 +47,7 @@ for id,v in pairs(mining.entities) do
 		on_put = mk_digger_inv_on_put(id),
 	})
 	
-	print(dump(inv1))
+--	print(dump(inv1))
 	
 	inv1:set_size("main", 5 * 8)
 	

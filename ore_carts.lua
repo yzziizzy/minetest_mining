@@ -44,6 +44,196 @@ local function printl(str, v)
 end
 
 
+local node_speeds = {
+	["carts:rail"] = 2,
+	["mining:cart_lift"] = .5,
+	["default"] = 2,
+}
+
+local function get_node_speed(name) 
+	return node_speeds[name] or node_speeds.default
+end
+
+
+
+local function find_new_direction(cart, data, pos, rpos)
+	
+	local npos = vector.add(pos, data.direction)
+	
+	print("no direction")
+	local n
+	
+	n = minetest.get_node({x=rpos.x + 1, y=rpos.y, z=rpos.z})
+	if is_rail(n.name) then
+		return {x=1, y=0, z=0}, "moving"
+	else
+		n = minetest.get_node({x=rpos.x - 1, y=rpos.y, z=rpos.z})
+		if is_rail(n.name) then
+			return {x=-1, y=0, z=0}, "moving"
+		else
+			n = minetest.get_node({x=rpos.x, y=rpos.y, z=rpos.z + 1})
+			if is_rail(n.name) then
+				return {x=0, y=0, z=1}, "moving"
+			else
+				n = minetest.get_node({x=rpos.x, y=rpos.y, z=rpos.z-1})
+				if is_rail(n.name) then
+					return {x=0, y=0, z=-1}, "moving"
+				else
+				
+				
+					print("checking below")
+					--below
+					local below = vector.add(nextp, {x=0, y=-1, z=0})
+					local bn = minetest.get_node(below)
+					local cross = vector.normalize({x=self.direction.z, y=0, z= -self.direction.x})
+					
+					local bleft = vector.add(vector.add(rpos, cross), {x=0, y=-1, z=0})  
+					local bright = vector.add(vector.subtract(rpos, cross), {x=0, y=-1, z=0})
+					local bln = minetest.get_node(bleft)
+					local brn = minetest.get_node(bright)
+				
+					print("belowleft: "..bln.name)
+					print("belowright: "..brn.name)
+				
+					if is_rail(bn.name) then
+						print("angle down")
+						local dir = vector.normalize(vector.add(self.direction, {x=0, y=-1, z=0}))
+						return dir, "moving"
+						
+					elseif is_rail(bln.name) then
+						local dir = vector.normalize(vector.add(cross, {x=0, y=-1, z=0}))
+						return dir, "moving"
+						
+					elseif is_rail(brn.name) then
+						local dir = vector.normalize(vector.add(vector.multiply(cross, -1), {x=0, y=-1, z=0}))
+						return dir, "moving"
+					else
+						
+						-- check for lifting
+						local apos = vector.add(pos, {x=0,y=1,z=0})
+						local anode = minetest.get_node(apos)
+						if anode.name == "mining:cart:lift" then
+							return {x=0,y=1,z=0}, "moving"
+						end
+						
+						
+						print("isolated cart")
+						return nil, "stop"
+					end
+				
+				end
+			end
+		end 
+	end
+	
+	
+	
+	
+end
+
+
+
+local operations = {
+	["carts:rail"] = function(cart, data, pos, rpos) 
+		-- see if we can just keep going
+		local npos = vector.add(pos, data.direction)
+		local node = minetest.get_node(npos)
+		if is_rail(node.name) then
+			-- good, keep going
+			return
+		end
+		
+		local dir, state = find_new_direction(cart, data, pos, rpos)
+		data.direction = dir
+		data.state = state
+		data.speed = get_node_speed(node.name)
+		
+		if state == "moving" then
+			self.object:setvelocity(vector.multiply(dir, data.speed))
+			-- TODO: fix positions not in direction of travel
+		end
+		
+	end,
+	
+	["mining:cart_lift"] = function(cart, data, pos, rpos) -- go up, then go out
+		local upos = vector.add(pos, {x=0,y=1,z=0})
+		local unode = minetest.get_node(upos)
+		if unode.name == "mining:cart_lift" then
+			-- keep going up
+			return
+		end
+		
+		-- look for new direction
+		local dir, state = find_new_direction(cart, data, pos, rpos)
+		data.direction = dir
+		data.state = state
+		data.speed = get_node_speed(node.name)
+		
+		if state == "moving" then
+			self.object:setvelocity(vector.multiply(dir, data.speed))
+			-- TODO: fix positions not in direction of travel
+		end
+	
+	end,
+	
+	["mining:rail_switch"] = function(cart, data, pos, rpos) -- internal switching state
+	
+	
+	end,
+
+	["mining:rail_multiplexer"] = function(cart, data, pos, rpos) -- alternate exits
+	
+	
+	end,
+
+	["mining:dump_rail"] = function(cart, data, pos, rpos) -- alternate exits
+		if #data.contents == 0 then
+			return
+		end
+		
+		if not vector.equals(rpos, data.last_dump_pos) then
+			local below = vector.subtract(rpos, {x=0,y=1,z=0})
+			local bn = minetest.get_node(below)
+			
+			if bn.name == "air" then
+				local c = table.remove(data.contents)
+				minetest.set_node(below, {name = c})
+				minetest.spawn_falling_node(below)
+				
+				cart.object:set_animation({x = 1, y = 15}, 10, 0, false)
+				
+				data.last_dump_pos = rpos
+			end
+		end
+	
+
+	end,
+
+	["carts:brake_rail"] = function(cart, data, pos, rpos) -- pause until restarted
+		data.state = "paused"
+		cart.object:setvelocity({x=0,y=0,z=0})
+		cart.object:setpos(rpos)
+		
+		return data.direction, "paused"
+	end,
+
+	["default"] = function() -- unknown node underneath
+	
+	
+	end,
+
+}
+
+
+
+
+
+
+
+
+
+
+-- obsolete
 local function check_new_direction(self, rpos)
 
 	if self.direction == nil or self.direction.x == nil then
@@ -84,7 +274,38 @@ end
 -- for debugging
 local counter = 0
 
+
 local function stepfn(self, dtime)
+	local pos = self.object:getpos()
+	local data = self.data
+	
+	if data == nil then
+		return
+	end
+	
+	local d = vector.distance(data.last_pos, pos)
+
+	local rpos = vector.round(pos)
+
+	
+	if  d > 1.0 then
+		-- crossed block lines
+		
+		local posnode = minetest.get_node(pos)
+		
+		local fn = operations[posnode.name] or operations.default
+		
+		fn(self, data, pos, rpos)
+		
+	end
+	
+	
+	
+	
+	if 1==1 then return end
+	
+	--- old algorithm
+	
 	
 	--print(" ---- ")
 	
@@ -455,6 +676,16 @@ minetest.register_node("mining:cart_lift", {
 	},
 })
 
+
+
+minetest.register_craft({
+	output = "mining:cart_lift",
+	recipe = {
+		{'default:bronze_ingot', '', 'default:bronze_ingot' },
+		{'',              'mining:ore_cart',      ''},
+		{'default:bronze_ingot', '', 'default:bronze_ingot' },
+	},
+})
 
 
 
